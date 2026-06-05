@@ -7,19 +7,28 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import anthropic
 
-SERPER_API_KEY = os.environ["SERPER_API_KEY"]
+TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_USER)
 
+PREMIUM_DOMAINS = [
+    "bloomberg.com", "wsj.com", "ft.com", "cnbc.com",
+    "reuters.com", "economist.com", "barrons.com", "marketwatch.com",
+]
+TECH_DOMAINS = [
+    "bloomberg.com", "wsj.com", "techcrunch.com", "cnbc.com",
+    "theverge.com", "wired.com", "arstechnica.com",
+]
+
 SEARCH_QUERIES = {
-    "morgan_stanley": "Morgan Stanley news today site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:reuters.com OR site:ft.com",
-    "competitors": "Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today site:bloomberg.com OR site:wsj.com OR site:cnbc.com OR site:reuters.com",
-    "capgemini": "Capgemini financial services consulting technology news today site:ft.com OR site:bloomberg.com OR site:reuters.com OR site:businesswire.com",
-    "tech": "Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today site:bloomberg.com OR site:wsj.com OR site:techcrunch.com OR site:cnbc.com OR site:theverge.com",
-    "us_policy": "US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today site:wsj.com OR site:bloomberg.com OR site:reuters.com OR site:ft.com",
-    "quirky": "funny quirky unusual news sports fun fact today 2026",
+    "morgan_stanley": ("Morgan Stanley news today", PREMIUM_DOMAINS),
+    "competitors": ("Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today", PREMIUM_DOMAINS),
+    "capgemini": ("Capgemini financial services consulting technology news today", PREMIUM_DOMAINS),
+    "tech": ("Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today", TECH_DOMAINS),
+    "us_policy": ("US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today", PREMIUM_DOMAINS),
+    "quirky": ("funny quirky unusual news sports interesting fact today", []),
 }
 
 NEWSLETTER_PROMPT = """You are a personal financial-services news analyst based in New York. Today is {date}.
@@ -65,15 +74,22 @@ SEARCH RESULTS:
 """
 
 
-def search_news(query: str) -> str:
-    url = "https://google.serper.dev/news"
-    payload = json.dumps({"q": query, "num": 8, "tbs": "qdr:d", "gl": "us"})
-    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
-    response = requests.post(url, headers=headers, data=payload, timeout=15)
+def search_news(query: str, domains: list) -> str:
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "search_depth": "advanced",
+        "topic": "news",
+        "days": 1,
+        "max_results": 8,
+    }
+    if domains:
+        payload["include_domains"] = domains
+    response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
     response.raise_for_status()
-    items = response.json().get("news", [])
+    items = response.json().get("results", [])
     lines = [
-        f"- {item.get('title', '')} | {item.get('source', '')} | {item.get('link', '')} | {item.get('snippet', '')}"
+        f"- {item.get('title', '')} | {item.get('url', '')} | {item.get('content', '')}"
         for item in items
     ]
     return "\n".join(lines) if lines else "No results found."
@@ -106,9 +122,9 @@ def main():
     print(f"Generating newsletter for {date_str}...")
 
     search_results = {}
-    for key, query in SEARCH_QUERIES.items():
+    for key, (query, domains) in SEARCH_QUERIES.items():
         print(f"  Fetching: {key}...")
-        search_results[key] = search_news(query)
+        search_results[key] = search_news(query, domains)
 
     print("Generating with Claude...")
     body = generate_newsletter(date_str, search_results)
