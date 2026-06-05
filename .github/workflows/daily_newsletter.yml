@@ -2,10 +2,10 @@ name: Daily Financial Newsletter
 
 on:
   schedule:
-    # 8:00 AM IST = 02:30 UTC. Change to suit your timezone.
-    # 8:00 AM EST  = 13:00 UTC  → cron: '0 13 * * 1-5'
-    # 8:00 AM GMT  = 08:00 UTC  → cron: '0 8 * * 1-5'
-    - cron: '30 2 * * 1-5'   # Mon–Fri only; use '* *' for every day
+    # New York time — GitHub Actions cron runs in UTC, NY observes DST:
+    #   Summer (Mar–Nov, EDT = UTC-4): 8 AM EDT = 12:00 UTC  ← active below
+    #   Winter (Nov–Mar, EST = UTC-5): 8 AM EST = 13:00 UTC  ← swap to '0 13 * * 1-5' in November
+    - cron: '0 12 * * 1-5'   # Mon–Fri; change to '0 13 * * 1-5' when clocks fall back
   workflow_dispatch:          # allows manual "Run workflow" from GitHub Actions tab
 
 jobs:

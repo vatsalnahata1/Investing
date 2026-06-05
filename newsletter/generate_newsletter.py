@@ -14,59 +14,66 @@ GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_USER)
 
 SEARCH_QUERIES = {
-    "morgan_stanley": "Morgan Stanley news today 2026",
-    "competitors": "Goldman Sachs JPMorgan Citigroup macro markets rates geopolitics news today 2026",
-    "capgemini": "Capgemini financial services consulting technology news today 2026",
-    "tech": "AI Google Meta Apple Nvidia product launch announcement today 2026",
-    "us_policy": "US banking regulation Federal Reserve Wall Street policy news today 2026",
+    "morgan_stanley": "Morgan Stanley news today site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:reuters.com OR site:ft.com",
+    "competitors": "Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today site:bloomberg.com OR site:wsj.com OR site:cnbc.com OR site:reuters.com",
+    "capgemini": "Capgemini financial services consulting technology news today site:ft.com OR site:bloomberg.com OR site:reuters.com OR site:businesswire.com",
+    "tech": "Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today site:bloomberg.com OR site:wsj.com OR site:techcrunch.com OR site:cnbc.com OR site:theverge.com",
+    "us_policy": "US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today site:wsj.com OR site:bloomberg.com OR site:reuters.com OR site:ft.com",
     "quirky": "funny quirky unusual news sports fun fact today 2026",
 }
 
-NEWSLETTER_PROMPT = """You are a personal financial-services news analyst. Today is {date}.
+NEWSLETTER_PROMPT = """You are a personal financial-services news analyst based in New York. Today is {date}.
 
-Below are raw search results for six newsletter sections. Write a concise email newsletter.
-Lead each item with the key fact, keep it skimmable, cite the source outlet in parentheses.
-Add a "60-SECOND SKIM" block at the very top — one punchy bullet per section.
+Below are raw search results (title | source | URL | snippet) for six newsletter sections.
+Write a concise email newsletter with these rules:
+
+FORMATTING RULES:
+- Add a "60-SECOND SKIM" block at the very top — one punchy bullet per section (no links needed there).
+- Section headers in ALL CAPS.
+- 3–5 bullet points per section, each starting with a dash.
+- After each bullet, include the full article URL on its own line, indented two spaces, prefixed with "→ ".
+  Example:
+    - Goldman Sachs raises $5B in new credit fund amid tightening markets. (Bloomberg)
+      → https://bloomberg.com/...
+- Lead each bullet with the key fact; keep it to 1–2 sentences.
+- US news takes priority; include international news only when it materially affects US markets or institutions.
+- If a section has no real news, write "Nothing notable today."
+- For Section 4 (TECH), cover each of the major companies (Google, Meta, Apple, Microsoft, Amazon, Nvidia)
+  proportionally to what's actually newsworthy — do NOT default to Nvidia alone; give airtime to all.
+- For Section 6 (OTHERS/FYI), write exactly two light items — something funny, a sports story, or a
+  quirky historical/trivia fact (e.g. "10,000 steps/day was a 1960s Japanese marketing term, not science").
 
 SEARCH RESULTS:
 
 1. MORGAN STANLEY WATCH — news specifically about Morgan Stanley:
 {morgan_stanley}
 
-2. COMPETITOR & MARKET MOVES — peers (Goldman Sachs, JPMorgan, etc.) and macro (rates, oil, geopolitics):
+2. COMPETITOR & MARKET MOVES — US peers (Goldman Sachs, JPMorgan, etc.) and macro (rates, oil, geopolitics) that affect MS:
 {competitors}
 
-3. CAPGEMINI & FS-SECTOR PEERS — Capgemini plus competitor consulting/tech firms in financial services:
+3. CAPGEMINI & FS-SECTOR PEERS — Capgemini plus competitor consulting/tech firms in financial services worldwide:
 {capgemini}
 
-4. TECH & NEW RELEASES — AI and big-tech (Google, Meta, Apple, Nvidia) launches and announcements:
+4. TECH & NEW RELEASES — AI and big-tech (Google, Meta, Apple, Microsoft, Amazon, Nvidia) launches and news — balanced coverage:
 {tech}
 
-5. US POLICY — regulatory/policy news affecting large banks and Wall Street:
+5. US POLICY — regulatory/policy news affecting large US banks and Wall Street:
 {us_policy}
 
-6. OTHERS (FYI) — exactly two light items: something that makes me smile, sports news, or a quirky FYI.
-   Example style: "10,000 steps/day was a 1960s Japanese pedometer marketing campaign, not science."
+6. OTHERS (FYI) — exactly two light items:
 {quirky}
-
-Rules:
-- If a section has no real news, write "Nothing notable today."
-- Output clean plain text ready to paste into an email.
-- Section headers in ALL CAPS.
-- 3-5 bullet points per section, each starting with a dash.
-- Keep it skimmable — one sentence per bullet where possible.
 """
 
 
 def search_news(query: str) -> str:
     url = "https://google.serper.dev/news"
-    payload = json.dumps({"q": query, "num": 6, "tbs": "qdr:d"})
+    payload = json.dumps({"q": query, "num": 8, "tbs": "qdr:d", "gl": "us"})
     headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
     response = requests.post(url, headers=headers, data=payload, timeout=15)
     response.raise_for_status()
     items = response.json().get("news", [])
     lines = [
-        f"- {item.get('title', '')} ({item.get('source', '')}) — {item.get('snippet', '')}"
+        f"- {item.get('title', '')} | {item.get('source', '')} | {item.get('link', '')} | {item.get('snippet', '')}"
         for item in items
     ]
     return "\n".join(lines) if lines else "No results found."
@@ -77,7 +84,7 @@ def generate_newsletter(date_str: str, search_results: dict) -> str:
     prompt = NEWSLETTER_PROMPT.format(date=date_str, **search_results)
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2500,
+        max_tokens=3500,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
