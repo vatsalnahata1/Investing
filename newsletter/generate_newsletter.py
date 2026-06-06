@@ -78,8 +78,7 @@ def search_news(query: str, domains: list) -> str:
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
-        "search_depth": "advanced",
-        "topic": "news",
+        "search_depth": "basic",
         "days": 1,
         "max_results": 8,
     }
