@@ -19,26 +19,49 @@ TECH_DOMAINS = [
     "theverge.com", "wired.com", "arstechnica.com",
 ]
 
+# Each section: (header, why_it_matters_tag, search_query, domains)
+# Queries are tuned for a Capgemini Sales/Account Rep whose client is Morgan Stanley.
 SECTIONS = [
-    ("1. MORGAN STANLEY WATCH",
-     "Morgan Stanley news today",
-     PREMIUM_DOMAINS),
-    ("2. COMPETITOR & MARKET MOVES",
-     "Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today",
-     PREMIUM_DOMAINS),
-    ("3. CAPGEMINI & FS-SECTOR PEERS",
-     "Capgemini financial services consulting technology news today",
-     PREMIUM_DOMAINS),
-    ("4. TECH & NEW RELEASES",
-     "Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today",
-     TECH_DOMAINS),
-    ("5. US POLICY",
-     "US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today",
-     PREMIUM_DOMAINS),
-    ("6. OTHERS (FYI)",
-     "funny quirky unusual news sports interesting fact today",
-     []),
+    (
+        "1. MORGAN STANLEY",
+        "Know what your client is thinking about before you walk in.",
+        "Morgan Stanley technology strategy AI digital transformation investment today",
+        PREMIUM_DOMAINS,
+    ),
+    (
+        "2. MARKET & COMPETITORS",
+        "Macro context that shapes MS priorities — and your pitch.",
+        "Goldman Sachs JPMorgan Wall Street AI technology strategy deal news today",
+        PREMIUM_DOMAINS,
+    ),
+    (
+        "3. CAPGEMINI",
+        "What your own firm is selling — use this in client conversations.",
+        "Capgemini financial services AI digital transformation new deal partnership today",
+        PREMIUM_DOMAINS,
+    ),
+    (
+        "4. TECH TO WATCH",
+        "AI moves MS will likely act on — potential Capgemini opportunity.",
+        "AI automation financial services banking technology launch Microsoft Google today",
+        TECH_DOMAINS,
+    ),
+    (
+        "5. REGULATION & POLICY",
+        "New compliance requirements = new consulting work at MS.",
+        "US bank regulation compliance technology requirement Morgan Stanley Wall Street today",
+        PREMIUM_DOMAINS,
+    ),
+    (
+        "6. ICEBREAKER",
+        "One thing to open a conversation with.",
+        "surprising interesting fact sport news today",
+        [],
+    ),
 ]
+
+MAX_ITEMS_PER_SECTION = 2
+SNIPPET_MAX_CHARS = 130
 
 
 def search_news(query: str, domains: list) -> list:
@@ -47,13 +70,13 @@ def search_news(query: str, domains: list) -> list:
         "query": query,
         "search_depth": "basic",
         "days": 1,
-        "max_results": 5,
+        "max_results": MAX_ITEMS_PER_SECTION + 1,
     }
     if domains:
         payload["include_domains"] = domains
     response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
     response.raise_for_status()
-    return response.json().get("results", [])
+    return response.json().get("results", [])[:MAX_ITEMS_PER_SECTION]
 
 
 def source_from_url(url: str) -> str:
@@ -64,49 +87,51 @@ def source_from_url(url: str) -> str:
         return ""
 
 
-def format_section(header: str, items: list) -> tuple:
-    """Returns (skim_line, full_section_text)."""
+def trim(text: str, max_chars: int) -> str:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] + "..."
+
+
+def format_section(header: str, tag: str, items: list) -> tuple:
+    """Returns (skim_line, full_block)."""
     if not items:
-        return (f"- {header}: Nothing notable today.", f"{header}\nNothing notable today.\n")
+        return (f"• {header}: Nothing notable today.", f"{header}\nNothing notable today.\n")
 
-    skim = f"- {items[0].get('title', '').strip()}"
+    first_title = items[0].get("title", "").strip()
+    skim = f"• {first_title}"
 
-    lines = [header]
+    lines = [f"{header}  [{tag}]"]
     for item in items:
         title = item.get("title", "").strip()
         url = item.get("url", "").strip()
-        snippet = item.get("content", "").strip()
-        if len(snippet) > 200:
-            snippet = snippet[:200].rsplit(" ", 1)[0] + "..."
+        snippet = trim(item.get("content", ""), SNIPPET_MAX_CHARS)
         src = source_from_url(url)
         src_tag = f" ({src})" if src else ""
-        lines.append(f"- {title}{src_tag}")
-        lines.append(f"  → {url}")
+        lines.append(f"  - {title}{src_tag}")
         if snippet:
-            lines.append(f"  {snippet}")
-    lines.append("")
+            lines.append(f"    {snippet}")
+        lines.append(f"    → {url}")
     return (skim, "\n".join(lines))
 
 
 def build_newsletter(date_str: str, all_results: list) -> str:
-    skim_lines = []
+    skim_lines = ["YOUR 60-SECOND BRIEF\n"]
     section_blocks = []
 
-    for (header, _, _), items in zip(SECTIONS, all_results):
-        skim, block = format_section(header, items)
+    for (header, tag, _, _), items in zip(SECTIONS, all_results):
+        skim, block = format_section(header, tag, items)
         skim_lines.append(skim)
         section_blocks.append(block)
 
-    skim_block = "60-SECOND SKIM\n" + "\n".join(skim_lines)
-    divider = "-" * 60
-
-    parts = [
-        f"Daily Financial Briefing — {date_str}",
-        divider,
-        skim_block,
-        divider,
-    ] + section_blocks
-
+    divider = "─" * 55
+    parts = (
+        [f"Daily Briefing for {date_str}", divider]
+        + ["\n".join(skim_lines)]
+        + [divider]
+        + section_blocks
+    )
     return "\n\n".join(parts)
 
 
@@ -126,16 +151,15 @@ def main():
     print(f"Generating newsletter for {date_str}...")
 
     all_results = []
-    for header, query, domains in SECTIONS:
+    for header, _, query, domains in SECTIONS:
         print(f"  Fetching: {header}...")
         all_results.append(search_news(query, domains))
 
     body = build_newsletter(date_str, all_results)
-
-    subject = f"Daily Financial Briefing — {date_str}"
+    subject = f"Your Daily Briefing — {date_str}"
     print("Sending email...")
     send_email(subject, body)
-    print("Done. Newsletter sent.")
+    print("Done.")
 
 
 if __name__ == "__main__":
