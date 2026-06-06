@@ -1,14 +1,11 @@
 import os
 import smtplib
-import json
 import requests
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import anthropic
 
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_USER)
@@ -22,87 +19,95 @@ TECH_DOMAINS = [
     "theverge.com", "wired.com", "arstechnica.com",
 ]
 
-SEARCH_QUERIES = {
-    "morgan_stanley": ("Morgan Stanley news today", PREMIUM_DOMAINS),
-    "competitors": ("Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today", PREMIUM_DOMAINS),
-    "capgemini": ("Capgemini financial services consulting technology news today", PREMIUM_DOMAINS),
-    "tech": ("Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today", TECH_DOMAINS),
-    "us_policy": ("US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today", PREMIUM_DOMAINS),
-    "quirky": ("funny quirky unusual news sports interesting fact today", []),
-}
-
-NEWSLETTER_PROMPT = """You are a personal financial-services news analyst based in New York. Today is {date}.
-
-Below are raw search results (title | source | URL | snippet) for six newsletter sections.
-Write a concise email newsletter with these rules:
-
-FORMATTING RULES:
-- Add a "60-SECOND SKIM" block at the very top — one punchy bullet per section (no links needed there).
-- Section headers in ALL CAPS.
-- 3–5 bullet points per section, each starting with a dash.
-- After each bullet, include the full article URL on its own line, indented two spaces, prefixed with "→ ".
-  Example:
-    - Goldman Sachs raises $5B in new credit fund amid tightening markets. (Bloomberg)
-      → https://bloomberg.com/...
-- Lead each bullet with the key fact; keep it to 1–2 sentences.
-- US news takes priority; include international news only when it materially affects US markets or institutions.
-- If a section has no real news, write "Nothing notable today."
-- For Section 4 (TECH), cover each of the major companies (Google, Meta, Apple, Microsoft, Amazon, Nvidia)
-  proportionally to what's actually newsworthy — do NOT default to Nvidia alone; give airtime to all.
-- For Section 6 (OTHERS/FYI), write exactly two light items — something funny, a sports story, or a
-  quirky historical/trivia fact (e.g. "10,000 steps/day was a 1960s Japanese marketing term, not science").
-
-SEARCH RESULTS:
-
-1. MORGAN STANLEY WATCH — news specifically about Morgan Stanley:
-{morgan_stanley}
-
-2. COMPETITOR & MARKET MOVES — US peers (Goldman Sachs, JPMorgan, etc.) and macro (rates, oil, geopolitics) that affect MS:
-{competitors}
-
-3. CAPGEMINI & FS-SECTOR PEERS — Capgemini plus competitor consulting/tech firms in financial services worldwide:
-{capgemini}
-
-4. TECH & NEW RELEASES — AI and big-tech (Google, Meta, Apple, Microsoft, Amazon, Nvidia) launches and news — balanced coverage:
-{tech}
-
-5. US POLICY — regulatory/policy news affecting large US banks and Wall Street:
-{us_policy}
-
-6. OTHERS (FYI) — exactly two light items:
-{quirky}
-"""
+SECTIONS = [
+    ("1. MORGAN STANLEY WATCH",
+     "Morgan Stanley news today",
+     PREMIUM_DOMAINS),
+    ("2. COMPETITOR & MARKET MOVES",
+     "Goldman Sachs JPMorgan Citigroup Wall Street US markets rates Fed geopolitics news today",
+     PREMIUM_DOMAINS),
+    ("3. CAPGEMINI & FS-SECTOR PEERS",
+     "Capgemini financial services consulting technology news today",
+     PREMIUM_DOMAINS),
+    ("4. TECH & NEW RELEASES",
+     "Google Meta Apple Microsoft Amazon Nvidia AI product launch announcement news today",
+     TECH_DOMAINS),
+    ("5. US POLICY",
+     "US banking regulation Federal Reserve OCC FDIC Wall Street policy Congress news today",
+     PREMIUM_DOMAINS),
+    ("6. OTHERS (FYI)",
+     "funny quirky unusual news sports interesting fact today",
+     []),
+]
 
 
-def search_news(query: str, domains: list) -> str:
+def search_news(query: str, domains: list) -> list:
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
         "search_depth": "basic",
         "days": 1,
-        "max_results": 8,
+        "max_results": 5,
     }
     if domains:
         payload["include_domains"] = domains
     response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
     response.raise_for_status()
-    items = response.json().get("results", [])
-    lines = [
-        f"- {item.get('title', '')} | {item.get('url', '')} | {item.get('content', '')}"
-        for item in items
-    ]
-    return "\n".join(lines) if lines else "No results found."
+    return response.json().get("results", [])
 
 
-def generate_newsletter(date_str: str, search_results: dict) -> str:
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = NEWSLETTER_PROMPT.format(date=date_str, **search_results)
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=3500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
+def source_from_url(url: str) -> str:
+    try:
+        host = url.split("/")[2].replace("www.", "")
+        return host.split(".")[0].capitalize()
+    except Exception:
+        return ""
+
+
+def format_section(header: str, items: list) -> tuple:
+    """Returns (skim_line, full_section_text)."""
+    if not items:
+        return (f"- {header}: Nothing notable today.", f"{header}\nNothing notable today.\n")
+
+    skim = f"- {items[0].get('title', '').strip()}"
+
+    lines = [header]
+    for item in items:
+        title = item.get("title", "").strip()
+        url = item.get("url", "").strip()
+        snippet = item.get("content", "").strip()
+        if len(snippet) > 200:
+            snippet = snippet[:200].rsplit(" ", 1)[0] + "..."
+        src = source_from_url(url)
+        src_tag = f" ({src})" if src else ""
+        lines.append(f"- {title}{src_tag}")
+        lines.append(f"  → {url}")
+        if snippet:
+            lines.append(f"  {snippet}")
+    lines.append("")
+    return (skim, "\n".join(lines))
+
+
+def build_newsletter(date_str: str, all_results: list) -> str:
+    skim_lines = []
+    section_blocks = []
+
+    for (header, _, _), items in zip(SECTIONS, all_results):
+        skim, block = format_section(header, items)
+        skim_lines.append(skim)
+        section_blocks.append(block)
+
+    skim_block = "60-SECOND SKIM\n" + "\n".join(skim_lines)
+    divider = "-" * 60
+
+    parts = [
+        f"Daily Financial Briefing — {date_str}",
+        divider,
+        skim_block,
+        divider,
+    ] + section_blocks
+
+    return "\n\n".join(parts)
 
 
 def send_email(subject: str, body: str) -> None:
@@ -120,13 +125,12 @@ def main():
     date_str = datetime.now().strftime("%B %d, %Y")
     print(f"Generating newsletter for {date_str}...")
 
-    search_results = {}
-    for key, (query, domains) in SEARCH_QUERIES.items():
-        print(f"  Fetching: {key}...")
-        search_results[key] = search_news(query, domains)
+    all_results = []
+    for header, query, domains in SECTIONS:
+        print(f"  Fetching: {header}...")
+        all_results.append(search_news(query, domains))
 
-    print("Generating with Claude...")
-    body = generate_newsletter(date_str, search_results)
+    body = build_newsletter(date_str, all_results)
 
     subject = f"Daily Financial Briefing — {date_str}"
     print("Sending email...")
