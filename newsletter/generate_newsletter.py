@@ -1,5 +1,6 @@
 import os
 import smtplib
+import time
 import requests
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -69,14 +70,21 @@ def search_news(query: str, domains: list) -> list:
         "api_key": TAVILY_API_KEY,
         "query": query,
         "search_depth": "basic",
-        "days": 1,
+        "days": 3,
         "max_results": MAX_ITEMS_PER_SECTION + 1,
     }
     if domains:
         payload["include_domains"] = domains
-    response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
-    response.raise_for_status()
-    return response.json().get("results", [])[:MAX_ITEMS_PER_SECTION]
+    for attempt in range(3):
+        try:
+            response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
+            response.raise_for_status()
+            return response.json().get("results", [])[:MAX_ITEMS_PER_SECTION]
+        except Exception as e:
+            print(f"    Search attempt {attempt + 1} failed: {e}")
+            if attempt < 2:
+                time.sleep(3)
+    return []
 
 
 def source_from_url(url: str) -> str:
@@ -154,6 +162,7 @@ def main():
     for header, _, query, domains in SECTIONS:
         print(f"  Fetching: {header}...")
         all_results.append(search_news(query, domains))
+        time.sleep(1)
 
     body = build_newsletter(date_str, all_results)
     subject = f"Your Daily Briefing — {date_str}"
